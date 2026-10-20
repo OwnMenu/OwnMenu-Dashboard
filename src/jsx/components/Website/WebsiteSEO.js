@@ -402,6 +402,48 @@ const css = `
   .checklist-item i { color: var(--seo-warn); margin-top: 2px; flex-shrink: 0; }
   .checklist-item strong { display: block; font-size: 0.88rem; color: var(--seo-ink); margin-bottom: 2px; }
   .checklist-item span { font-size: 0.8rem; color: #78716c; line-height: 1.45; }
+
+  .gsc-card {
+    padding: 1.15rem 1.25rem;
+    border-bottom: 1px solid #f1f5f9;
+    background: linear-gradient(180deg, #ffffff 0%, #fcfdff 100%);
+  }
+  .gsc-top-row {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  }
+  .gsc-badge-row {
+    display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; margin-bottom: 0.35rem;
+  }
+  .gsc-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px; border-radius: 999px; font-size: 0.7rem; font-weight: 700;
+  }
+  .gsc-badge.connected { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+  .gsc-badge.disconnected { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+  .gsc-badge.verified { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+  .gsc-badge.unverified { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+  .gsc-badge.sitemap { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+  .gsc-meta-line { font-size: 0.8rem; color: var(--seo-muted); margin: 0.2rem 0 0; }
+  .gsc-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .btn-gsc-primary {
+    background: linear-gradient(135deg, #dd2f6e 0%, #be185d 100%);
+    color: #fff; border: none; border-radius: 9px; padding: 0.45rem 0.95rem;
+    font-size: 0.8rem; font-weight: 700; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-gsc-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-gsc-outline {
+    background: #fff; color: var(--seo-ink); border: 1px solid var(--seo-line);
+    border-radius: 9px; padding: 0.45rem 0.85rem; font-size: 0.8rem; font-weight: 650;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-gsc-outline:hover:not(:disabled) { background: #f8fafc; border-color: #cbd5e1; }
+  .btn-gsc-outline:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-gsc-danger {
+    background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;
+    border-radius: 9px; padding: 0.45rem 0.8rem; font-size: 0.8rem; font-weight: 650;
+    cursor: pointer;
+  }
 `;
 
 export default function WebsiteSEO() {
@@ -437,12 +479,151 @@ export default function WebsiteSEO() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [checklistItems, setChecklistItems] = useState([]);
   const [showChecklistModal, setShowChecklistModal] = useState(false);
+  const [gscStatus, setGscStatus] = useState(null);
+  const [gscLoading, setGscLoading] = useState(false);
+  const [gscConnecting, setGscConnecting] = useState(false);
+  const [gscSyncing, setGscSyncing] = useState(false);
   const heroInputRef = useRef(null);
+  const gscPopupTimerRef = useRef(null);
 
   // All restaurants get full SEO — no plan gating on output or editing.
   const seoLocked = false;
 
-  useEffect(() => { if (restaurantId) dispatch(getSEOThunk(restaurantId)); }, [dispatch, restaurantId]);
+  const fetchGscStatus = React.useCallback(async () => {
+    if (!restaurantId) return;
+    setGscLoading(true);
+    try {
+      const res = await fetch("/api/google-search-console/status", {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGscStatus(data);
+      }
+    } catch (err) {
+      console.warn("Failed to load GSC status:", err);
+    } finally {
+      setGscLoading(false);
+    }
+  }, [restaurantId]);
+
+  useEffect(() => {
+    if (restaurantId) {
+      dispatch(getSEOThunk(restaurantId));
+      fetchGscStatus();
+    }
+  }, [dispatch, restaurantId, fetchGscStatus]);
+
+  useEffect(() => {
+    const onMessage = (event) => {
+      const payload = event?.data;
+      if (!payload || payload.source !== "ownmenu-gsc-oauth") return;
+      if (gscPopupTimerRef.current) {
+        clearInterval(gscPopupTimerRef.current);
+        gscPopupTimerRef.current = null;
+      }
+      setGscConnecting(false);
+      if (payload.status === "connected") {
+        toast.success(t("dashboard.gsc.connected_toast"));
+        fetchGscStatus();
+        if (restaurantId) dispatch(getSEOThunk(restaurantId));
+      } else {
+        toast.error(payload.error || t("dashboard.gsc.connect_failed"));
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      if (gscPopupTimerRef.current) clearInterval(gscPopupTimerRef.current);
+    };
+  }, [dispatch, fetchGscStatus, restaurantId, t]);
+
+  const handleGscConnect = async () => {
+    setGscConnecting(true);
+    try {
+      const res = await fetch("/api/google-search-console/connect?popup=1", {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.authUrl) {
+        setGscConnecting(false);
+        toast.error(data.error || t("dashboard.gsc.connect_failed"));
+        return;
+      }
+      const width = 560;
+      const height = 680;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+      const popup = window.open(
+        data.authUrl,
+        "ownmenu_gsc_oauth",
+        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+      );
+      if (!popup) {
+        window.location.href = data.authUrl;
+        return;
+      }
+      if (gscPopupTimerRef.current) clearInterval(gscPopupTimerRef.current);
+      gscPopupTimerRef.current = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(gscPopupTimerRef.current);
+          gscPopupTimerRef.current = null;
+          setGscConnecting(false);
+          fetchGscStatus();
+          if (restaurantId) dispatch(getSEOThunk(restaurantId));
+        }
+      }, 1000);
+    } catch {
+      setGscConnecting(false);
+      toast.error(t("dashboard.gsc.connect_failed"));
+    }
+  };
+
+  const handleGscVerifyAndSync = async () => {
+    setGscSyncing(true);
+    try {
+      const res = await fetch("/api/google-search-console/verify-and-sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${getToken()}`,
+        },
+        body: JSON.stringify({ siteUrl: gscStatus?.siteUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || t("dashboard.gsc.verify_sync_failed"));
+        return;
+      }
+      if (data.verified) {
+        toast.success(t("dashboard.gsc.verify_sync_success"));
+      } else {
+        toast.warning(data.verificationError || t("dashboard.gsc.verify_pending_hint"));
+      }
+      fetchGscStatus();
+      if (restaurantId) dispatch(getSEOThunk(restaurantId));
+    } catch {
+      toast.error(t("dashboard.gsc.verify_sync_failed"));
+    } finally {
+      setGscSyncing(false);
+    }
+  };
+
+  const handleGscDisconnect = async () => {
+    if (!window.confirm(t("dashboard.gsc.disconnect_confirm"))) return;
+    try {
+      const res = await fetch("/api/google-search-console/unbind", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (res.ok) {
+        toast.info(t("dashboard.gsc.disconnected_toast"));
+        fetchGscStatus();
+      }
+    } catch {
+      toast.error(t("dashboard.gsc.disconnect_failed"));
+    }
+  };
 
   useEffect(() => {
     const tags = seo?.seo_cuisine_tags;
@@ -1033,8 +1214,102 @@ export default function WebsiteSEO() {
             </div>
           </div>
 
-          <p className="section-divider">Advanced</p>
+          <p className="section-divider">Google Search Console & Webmaster Tools</p>
           <div className="seo-panel">
+            <div className="seo-panel-header">
+              <div className="panel-icon blue"><i className="bi bi-google" /></div>
+              <div style={{ flex: 1 }}>
+                <p className="panel-title">{t("dashboard.gsc.seo_card_title")}</p>
+                <p className="panel-desc">{t("dashboard.gsc.seo_card_desc")}</p>
+              </div>
+            </div>
+
+            <div className="gsc-card">
+              {gscLoading && !gscStatus ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#64748b", fontSize: "0.85rem" }}>
+                  <Spinner size="sm" /> {t("dashboard.loading_analytics")}
+                </div>
+              ) : gscStatus?.connected ? (
+                <div className="gsc-top-row">
+                  <div>
+                    <div className="gsc-badge-row">
+                      <span className="gsc-badge connected">
+                        <i className="bi bi-check-circle-fill" /> {t("dashboard.gsc.connected")}
+                      </span>
+                      <span className={`gsc-badge ${gscStatus.verified ? "verified" : "unverified"}`}>
+                        {gscStatus.verified ? t("dashboard.gsc.badge_verified") : t("dashboard.gsc.badge_unverified")}
+                      </span>
+                      <span className="gsc-badge sitemap">
+                        {t("dashboard.gsc.sitemaps_submitted", {
+                          count: Array.isArray(gscStatus.sitemapsSubmitted)
+                            ? gscStatus.sitemapsSubmitted.length
+                            : 0,
+                        })}
+                      </span>
+                    </div>
+                    <p className="gsc-meta-line">
+                      <strong>{gscStatus.siteUrl}</strong>
+                      {gscStatus.email ? ` · ${gscStatus.email}` : ""}
+                    </p>
+                    {gscStatus.lastVerificationError && !gscStatus.verified ? (
+                      <p className="gsc-meta-line" style={{ color: "#b45309" }}>
+                        {gscStatus.lastVerificationError}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="gsc-actions">
+                    <button
+                      type="button"
+                      className="btn-gsc-primary"
+                      onClick={() => navigate("/website-analytics?tab=gsc")}
+                    >
+                      <i className="bi bi-graph-up-arrow" /> {t("dashboard.gsc.view_analytics_btn")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-gsc-outline"
+                      onClick={handleGscVerifyAndSync}
+                      disabled={gscSyncing}
+                    >
+                      {gscSyncing ? <Spinner size="sm" /> : <i className="bi bi-arrow-repeat" />}
+                      {gscSyncing ? t("dashboard.gsc.syncing") : t("dashboard.gsc.verify_and_sync_btn")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-gsc-danger"
+                      onClick={handleGscDisconnect}
+                    >
+                      {t("dashboard.gsc.disconnect_btn")}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="gsc-top-row">
+                  <div>
+                    <div className="gsc-badge-row">
+                      <span className="gsc-badge disconnected">{t("dashboard.gsc.not_connected_badge")}</span>
+                    </div>
+                    <p className="gsc-meta-line">
+                      {t("dashboard.gsc.not_connected_desc")}
+                      {gscStatus?.resolvedSiteUrl ? ` (${gscStatus.resolvedSiteUrl})` : ""}
+                    </p>
+                  </div>
+                  <div className="gsc-actions">
+                    <button
+                      type="button"
+                      className="btn-gsc-primary"
+                      onClick={handleGscConnect}
+                      disabled={gscConnecting}
+                    >
+                      {gscConnecting ? <Spinner size="sm" /> : <i className="bi bi-google" />}
+                      {gscConnecting ? t("dashboard.gsc.connecting") : t("dashboard.gsc.connect_button")}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <button
               type="button"
               className="seo-panel-header"
@@ -1043,8 +1318,8 @@ export default function WebsiteSEO() {
             >
               <div className="panel-icon slate"><i className="bi bi-shield-check" /></div>
               <div style={{ flex: 1 }}>
-                <p className="panel-title">Search Console & Bing (optional)</p>
-                <p className="panel-desc">Only if you verify the site in Google or Bing. Not required for sitemap indexing.</p>
+                <p className="panel-title">Manual Verification Meta Tags (Google & Bing)</p>
+                <p className="panel-desc">Auto-filled when connecting Google Search Console above, or paste manually.</p>
               </div>
               <i className={`bi bi-chevron-${showAdvanced ? "up" : "down"}`} style={{ color: "#94a3b8" }} />
             </button>
