@@ -23,7 +23,7 @@ import EditProducts from "./EditProducts";
 import AddProducts from "./AddProducts";
 import { 
     FaChevronDown, FaChevronRight, FaEdit, FaTrash, 
-    FaPlus, FaEyeSlash, FaSearch, FaLayerGroup, FaTags, FaFire, FaClock, FaStar, FaBoxOpen, FaExclamationTriangle, FaCircle, FaTools, FaArchive, FaUndo, FaFileExcel
+    FaPlus, FaEyeSlash, FaSearch, FaLayerGroup, FaTags, FaFire, FaThumbsUp, FaClock, FaStar, FaBoxOpen, FaExclamationTriangle, FaCircle, FaTools, FaArchive, FaUndo, FaFileExcel
 } from "react-icons/fa";
 import * as XLSX from "xlsx";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -1194,6 +1194,7 @@ function AllProduct() {
                                                         {entry.entity?.hot_item && <Badge bg="danger" className="p-2 rounded-pill shadow-sm"><FaFire size={10} className="me-1"/>{t("all_prod.badges.hot")}</Badge>}
                                                         {entry.entity?.sold_out && <Badge bg="dark" className="p-2 rounded-pill shadow-sm">{t("all_prod.badges.sold_out")}</Badge>}
                                                         {entry.entity?.popular_category && <Badge bg="warning" text="dark" className="p-2 rounded-pill shadow-sm"><FaStar size={10} className="me-1"/>{t("all_prod.badges.popular")}</Badge>}
+                                                        {entry.entity?.must_order && <Badge bg="primary" className="p-2 rounded-pill shadow-sm"><FaThumbsUp size={10} className="me-1"/>Must Order</Badge>}
                                                         {entry.entity?.menu_only && <Badge bg="secondary" className="p-2 rounded-pill shadow-sm">{t("all_prod.badges.menu")}</Badge>}
                                                         {entry.entity?.hidden && <Badge bg="secondary" className="p-2 rounded-pill shadow-sm">{t("all_prod.badges.hidden")}</Badge>}
                                                     </div>
